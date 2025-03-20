@@ -1,0 +1,10 @@
+# 不传递模型和数据集
+datasets/
+models/
+
+# 不传递模型输出内容
+outputs/
+outputs_*/
+
+# 不传递 unsloth 自动生成的文件
+unsloth_compiled_cache/
