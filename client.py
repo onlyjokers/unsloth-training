@@ -329,6 +329,36 @@ class MaterialSender:
                 'error_msg': '没有收到服务器响应'
             }
 
+def send_text_to_blender(material_code, material_name="remote_material_from_text", server_address="localhost", port=5555, reverse_mode=False, timeout=15000):
+    """直接发送文本形式的材质代码到Blender服务器
+    
+    Args:
+        material_code: 材质的Python代码字符串
+        material_name: 材质名称 (可选)
+        server_address: 服务器地址
+        port: 服务器端口
+        reverse_mode: 是否使用反向连接模式
+        timeout: 超时时间(毫秒)
+        
+    Returns:
+        dict: 包含状态和错误信息的响应
+    """
+    try:
+        # 创建发送器
+        sender = MaterialSender(server_address=server_address, port=port, reverse_mode=reverse_mode, timeout=timeout)
+        if not sender.connect():
+            return {'status': 'failed', 'error_msg': "无法连接到Blender服务器"}
+        
+        # 发送材质 (使用内部的 send_material 方法)
+        response = sender.send_material(material_code, material_name)
+        sender.close()
+        
+        return response
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {'status': 'failed', 'error_msg': f"发送材质文本时出错: {str(e)}"}
+
 def send_file_to_blender(file_path, server_address="localhost", port=5555, reverse_mode=False):
     """发送材质文件到Blender服务器
     

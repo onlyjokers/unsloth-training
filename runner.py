@@ -113,7 +113,7 @@ material_111 = material_111_node_group()
 """
 
 # 使用新函数直接发送文本内容
-response = send_text_to_blender(blender_code, server_address="10.30.252.172", port=5555)
+response = send_text_to_blender(blender_code, server_address="10.30.244.17", port=5555)
 print(f"状态：{response['status']}")
 if response.get('error_msg'):
     print(f"错误信息：{response['error_msg']}")
