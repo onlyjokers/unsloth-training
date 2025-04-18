@@ -381,7 +381,7 @@ materials2 = {
     "head": {
         "input": "创建一个红色的楼房的材质",
         "taskid": taskid, #"1c6cafdb570d4428a30e59da3a783b79", #taskid, # 得注意重定义问题。得在数据集环节就植入 taskid
-        "request": ["accuracy_rank", "meaning_rank", "status"]
+        "request": []
     },
     "outputs": [
         {
@@ -392,18 +392,18 @@ materials2 = {
             "name": "M2",
             "code": blender_code4
         },
-        {
-            "name": "M3",
-            "code": blender_code
-        },
-        {
-            "name": "M4",
-            "code": blender_code2
-        },
-        {
-            "name": "M5",
-            "code": blender_code2
-        }
+        # {
+        #     "name": "M3",
+        #     "code": blender_code
+        # },
+        # {
+        #     "name": "M4",
+        #     "code": blender_code2
+        # },
+        # {
+        #     "name": "M5",
+        #     "code": blender_code2
+        # }
     ]
 }
 
@@ -416,12 +416,13 @@ client = ClientSender(server_address="10.30.244.17", port=5555)
 
 # print(response1)
 
-time.sleep(10)
+# time.sleep(10)
 
 # 第二次发送材质 - 复用同一连接
 print("第二次发送材质...")
 response = client.send_materials(materials2)
 print(response)
+print(response["accuracy_rank"])
     
     
 
