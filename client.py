@@ -172,162 +172,246 @@ class MaterialSender:
         """发送材质组数据到服务器
         
         Args:
-            material_group: 材质组列表，每个元素应包含id, name, code
+            material_group: 可以是列表或包含outputs字段的dict
             
         Returns:
             list: 包含处理结果的列表
         """
-        # 准备发送的数据
-        data = {
-            'material_group': material_group,
-            'session_id': self.session_id,
-            'timestamp': time.time()
-        }
-        
+        # 准备发送的数据，支持 dict 或 list
+        if isinstance(material_group, dict):
+            data = material_group.copy()
+            # 新版格式中的材质列表
+            material_list = data.get('outputs', data.get('material_group', []))
+        else:
+            material_list = material_group
+            data = {
+                'material_group': material_list,
+                'session_id': self.session_id,
+                'timestamp': time.time()
+            }
+         
         # 打包数据
         message = msgpack.packb(data)
         
-        try:
-            if self.reverse_mode:
-                # 反向模式：等待至少一个服务器连接
-                if not self.clients:
-                    print("等待服务器连接...")
-                    if not self.connected_event.wait(10.0):
-                        return [{
-                            'id': m.get('id'),
-                            'name': m.get('name'),
-                            'status': False,
-                            'error_msg': "没有服务器连接",
-                            'rank': idx + 1
-                        } for idx, m in enumerate(material_group)]
-                
-                # 反向模式：向所有连接的服务器发送
-                material_names = [m.get('name', f"材质{m.get('id', 'unknown')}") for m in material_group]
-                print(f"正在发送材质组 ({len(material_group)}个材质) 到已连接的服务器")
-                
-                # 获取第一个可用的服务器ID
-                server_id = list(self.clients.keys())[0]
-                
-                # 重置响应事件
-                self.response_event.clear()
-                
-                # 清空可能存在的旧消息
-                while not self.message_queue.empty():
-                    try:
-                        self.message_queue.get_nowait()
-                    except queue.Empty:
-                        break
-                
-                # 发送多部分消息：[服务器ID, 空帧, 实际数据]
-                print(f"向服务器 {server_id.hex()[:8]} 发送 {len(material_group)} 个材质...")
-                self.socket.send_multipart([server_id, b'', message])
-                
-                # 等待响应 - 使用事件和消息队列
-                response_timeout = self.timeout / 1000.0  # 转换为秒
-                print(f"等待服务器响应，超时时间 {response_timeout} 秒...")
-                
-                # 等待响应事件
-                if not self.response_event.wait(response_timeout):
-                    print("等待服务器响应超时!")
-                    return [{
-                        'id': m.get('id'),
-                        'name': m.get('name'),
-                        'status': False,
-                        'error_msg': "服务器响应超时",
-                        'rank': idx + 1
-                    } for idx, m in enumerate(material_group)]
-                
-                try:
-                    # 从消息队列获取响应
-                    recv_server_id, response = self.message_queue.get(block=False)
-                    
-                    # 验证消息是否来自预期的服务器
-                    if recv_server_id == server_id:
-                        print(f"收到来自服务器 {server_id.hex()[:8]} 的有效响应")
-                        # 输出完整响应进行调试
-                        if 'material_results' in response:
-                            material_results = response.get('material_results', [])
-                            print(f"响应包含 {len(material_results)} 个材质结果")
-                            return material_results
-                        else:
-                            print("警告：服务器响应中没有'material_results'字段")
-                            print(f"收到的响应键: {list(response.keys())}")
-                            # 尝试使用向后兼容的方式处理旧格式响应
-                            if 'status' in response:
-                                status = response.get('status', 'failed')
-                                error_msg = response.get('error_msg', '未知错误')
+        # 添加重试逻辑
+        max_retries = 5
+        retry_delay = 1  # 秒
+        retry_count = 0
+        last_error = None
+        
+        while retry_count < max_retries:
+            try:
+                if self.reverse_mode:
+                    # 反向模式：等待至少一个服务器连接
+                    if not self.clients:
+                        print("等待服务器连接...")
+                        if not self.connected_event.wait(10.0):
+                            # 无服务器连接，尝试重试
+                            retry_count += 1
+                            if retry_count < max_retries:
+                                print(f"没有服务器连接，第 {retry_count}/{max_retries} 次尝试重新等待...")
+                                time.sleep(retry_delay)
+                                continue
+                            else:
+                                # 达到最大重试次数，全部返回失败
                                 return [{
-                                    'id': 1,
-                                    'name': '未知材质',
-                                    'status': status == 'Success',
-                                    'error_msg': error_msg,
-                                    'rank': 1
-                                }]
-                    else:
-                        print(f"收到来自未预期服务器的响应: {recv_server_id.hex()[:8]}")
-                        
-                except queue.Empty:
-                    print("警告：响应事件被触发但队列为空")
+                                    'id': m.get('id'),
+                                    'name': m.get('name'),
+                                    'status': False,
+                                    'error_msg': "多次尝试后仍无服务器连接",
+                                    'accuracy_rank': 0,
+                                    'meaning_rank': 1
+                                } for m in material_list]
                     
-                # 如果到这里还没有返回，说明出现了问题
-                print("处理响应时遇到问题，返回空结果")
-                return []
+                    # 反向模式：向所有连接的服务器发送
+                    material_names = [m.get('name', f"材质{m.get('id', 'unknown')}") for m in material_list]
+                    print(f"正在发送材质组 ({len(material_list)}个材质) 到已连接的服务器")
+                    
+                    # 获取第一个可用的服务器ID
+                    server_id = list(self.clients.keys())[0]
+                    
+                    # 重置响应事件
+                    self.response_event.clear()
+                    
+                    # 清空可能存在的旧消息
+                    while not self.message_queue.empty():
+                        try:
+                            self.message_queue.get_nowait()
+                        except queue.Empty:
+                            break
+                    
+                    # 发送多部分消息：[服务器ID, 空帧, 实际数据]
+                    print(f"向服务器 {server_id.hex()[:8]} 发送 {len(material_list)} 个材质...")
+                    self.socket.send_multipart([server_id, b'', message])
+                    
+                    # 等待响应 - 使用事件和消息队列
+                    response_timeout = self.timeout / 1000.0  # 转换为秒
+                    print(f"等待服务器响应，超时时间 {response_timeout} 秒...")
+                    
+                    # 等待响应事件
+                    if not self.response_event.wait(response_timeout):
+                        print(f"等待服务器响应超时! (尝试 {retry_count+1}/{max_retries})")
+                        # 增加重试次数并等待
+                        retry_count += 1
+                        if retry_count < max_retries:
+                            print(f"将在 {retry_delay} 秒后重试...")
+                            time.sleep(retry_delay)
+                            continue
+                        else:
+                            # 最大重试次数已达到
+                            return [{
+                                'id': m.get('id'),
+                                'name': m.get('name'),
+                                'status': False,
+                                'error_msg': "多次尝试后服务器仍无响应",
+                                'accuracy_rank': 0,
+                                'meaning_rank': 1
+                            } for m in material_list]
+                    
+                    try:
+                        # 从消息队列获取响应
+                        recv_server_id, response = self.message_queue.get(block=False)
+                        
+                        # 验证消息是否来自预期的服务器
+                        if recv_server_id == server_id:
+                            print(f"收到来自服务器 {server_id.hex()[:8]} 的有效响应")
+                            # 输出完整响应进行调试
+                            if 'material_results' in response:
+                                material_results = response.get('material_results', [])
+                                print(f"响应包含 {len(material_results)} 个材质结果")
+                                return material_results
+                            else:
+                                print("警告：服务器响应中没有'material_results'字段")
+                                print(f"收到的响应键: {list(response.keys())}")
+                                # 尝试使用向后兼容的方式处理旧格式响应
+                                if 'status' in response:
+                                    status = response.get('status', 'failed')
+                                    error_msg = response.get('error_msg', '未知错误')
+                                    
+                                    # 从服务器响应中提取排名信息，确保同步
+                                    accuracy_rank = 0  # 默认为0
+                                    meaning_rank = 1  # 默认为1
+                                    
+                                    # 查找服务器可能返回的排名信息
+                                    if response.get('material_results') and len(response['material_results']) > 0:
+                                        material_result = response['material_results'][0]
+                                        accuracy_rank = material_result.get('accuracy_rank', 0)
+                                        meaning_rank = material_result.get('meaning_rank', 1)
+                                    
+                                    return [{
+                                        'id': 1,
+                                        'name': '未知材质',
+                                        'status': status == 'Success',
+                                        'error_msg': error_msg,
+                                        'accuracy_rank': accuracy_rank,  # 使用服务器返回的排名
+                                        'meaning_rank': meaning_rank
+                                    }]
+                        else:
+                            print(f"收到来自未预期服务器的响应: {recv_server_id.hex()[:8]}")
+                            # 增加重试计数
+                            retry_count += 1
+                            if retry_count < max_retries:
+                                print(f"将在 {retry_delay} 秒后重试...")
+                                time.sleep(retry_delay)
+                                continue
+                            
+                    except queue.Empty:
+                        print("警告：响应事件被触发但队列为空")
+                        # 增加重试计数
+                        retry_count += 1
+                        if retry_count < max_retries:
+                            print(f"将在 {retry_delay} 秒后重试...")
+                            time.sleep(retry_delay)
+                            continue
+                        
+                    # 如果到这里还没有返回，说明出现了问题
+                    print(f"处理响应时遇到问题，第 {retry_count+1}/{max_retries} 次尝试")
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        print(f"将在 {retry_delay} 秒后重试...")
+                        time.sleep(retry_delay)
+                        continue
+                    else:
+                        print("达到最大重试次数，返回空结果")
+                        return []
+                    
+                else:
+                    # 传统模式：直接发送到服务器
+                    material_names = [m.get('name', f"材质{m.get('id', 'unknown')}") for m in material_list]
+                    print(f"正在发送材质组 ({len(material_list)}个材质) 到 {self.server_address}:{self.port}")
+                    self.socket.send(message)
+                    
+                    # 等待响应
+                    print("等待服务器响应...")
+                    response_data = self.socket.recv()
+                    response = msgpack.unpackb(response_data, raw=False)
+                    # 如果是自定义映射结果（包含 status 或 meaning_rank），直接返回该映射
+                    if isinstance(response, dict):
+                        if 'status' in response or 'meaning_rank' in response:
+                            # 返回用户请求的字段映射
+                            return {k: response[k] for k in response if k not in ('session_id','taskid','material_results','timestamp')}
+                        # 否则按旧版处理
+                        return response.get('material_results', [])
+                    return response
+                    
+            except zmq.ZMQError as e:
+                last_error = e
+                # 只有 "Resource temporarily unavailable" 和常见的通信错误才重试
+                error_str = str(e)
+                retry_needed = False
                 
-            else:
-                # 传统模式：直接发送到服务器
-                material_names = [m.get('name', f"材质{m.get('id', 'unknown')}") for m in material_group]
-                print(f"正在发送材质组 ({len(material_group)}个材质) 到 {self.server_address}:{self.port}")
-                self.socket.send(message)
+                # 检查是否为常见的临时通信错误
+                if "Resource temporarily unavailable" in error_str:
+                    print(f"ZMQ通信错误: 资源暂时不可用 (尝试 {retry_count+1}/{max_retries})")
+                    retry_needed = True
+                elif "Operation cannot be accomplished in current state" in error_str:
+                    print(f"ZMQ通信错误: 操作无法在当前状态下完成 (尝试 {retry_count+1}/{max_retries})")
+                    # 需要重新创建连接
+                    try:
+                        self.socket.close(linger=10)
+                        self.socket = self.context.socket(zmq.REQ)
+                        self.socket.setsockopt(zmq.RCVTIMEO, self.timeout)
+                        self.socket.setsockopt(zmq.SNDTIMEO, self.timeout)
+                        self.socket.connect(f"tcp://{self.server_address}:{self.port}")
+                        print(f"已重新创建连接到 {self.server_address}:{self.port}")
+                        retry_needed = True
+                    except Exception as reconnect_error:
+                        print(f"重新创建连接失败: {reconnect_error}")
+                elif "Connection refused" in error_str or "Connection reset" in error_str:
+                    print(f"ZMQ通信错误: 连接被拒绝或重置 (尝试 {retry_count+1}/{max_retries})")
+                    retry_needed = True
                 
-                # 等待响应
-                print("等待服务器响应...")
-                response_data = self.socket.recv()
-                response = msgpack.unpackb(response_data, raw=False)
+                if retry_needed:
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        print(f"将在 {retry_delay} 秒后重试...")
+                        time.sleep(retry_delay)
+                        print(f"开始第 {retry_count+1}/{max_retries} 次尝试...")
+                        continue
+                    else:
+                        print(f"达到最大重试次数 {max_retries}，放弃重试")
                 
-                return response.get('material_results', [])
-                
-        except zmq.ZMQError as e:
-            print(f"发送材质数据失败: {e}")
-            return [{
-                'id': m.get('id'),
-                'name': m.get('name'),
-                'status': False,
-                'error_msg': f"通信错误: {str(e)}",
-                'rank': idx + 1
-            } for idx, m in enumerate(material_group)]
-    
-    def send_material(self, material_code, material_name="remote_material"):
-        """发送单个材质数据到服务器 (向下兼容)
+                # 达到最大重试或其他错误
+                print(f"发送材质数据失败: {e} (已尝试 {retry_count} 次)")
+                return [{
+                    'id': m.get('id'),
+                    'name': m.get('name'),
+                    'status': False,
+                    'error_msg': f"多次尝试后通信错误: {str(e)}",
+                    'accuracy_rank': 0,
+                    'meaning_rank': 1
+                } for m in material_list]
         
-        Args:
-            material_code: 材质的Python代码
-            material_name: 材质名称
-            
-        Returns:
-            dict: 包含status和error_msg的响应字典
-        """
-        # 将单个材质封装为材质组格式
-        material_group = [{
-            'id': 1,
-            'name': material_name,
-            'code': material_code
-        }]
-        
-        # 发送材质组并获取结果
-        results = self.send_material_group(material_group)
-        
-        # 从结果列表中提取单个材质的结果
-        if results and len(results) > 0:
-            result = results[0]
-            return {
-                'status': 'Success' if result.get('status') else 'failed',
-                'error_msg': result.get('error_msg', '')
-            }
-        else:
-            return {
-                'status': 'failed',
-                'error_msg': '没有收到服务器响应'
-            }
+        # 如果所有重试都失败了
+        print(f"经过 {max_retries} 次重试后仍失败，最后错误: {last_error}")
+        return [{
+            'id': m.get('id'),
+            'name': m.get('name'),
+            'status': False, 
+            'error_msg': f"经过 {max_retries} 次重试后仍失败: {last_error}",
+            'accuracy_rank': 0,
+            'meaning_rank': 1
+        } for m in material_list]
 
 def send_text_to_blender(material_code, material_name="remote_material_from_text", server_address="localhost", port=5555, reverse_mode=False, timeout=15000):
     """直接发送文本形式的材质代码到Blender服务器
@@ -398,6 +482,259 @@ def send_file_to_blender(file_path, server_address="localhost", port=5555, rever
         import traceback
         traceback.print_exc()
         return {'status': 'failed', 'error_msg': f"发送材质时出错: {str(e)}"}
+
+def send_materials_json_to_blender(materials_json, server_address="localhost", port=5555, reverse_mode=False, timeout=15000):
+    """发送JSON格式的多个材质到Blender服务器
+    
+    支持新版格式：
+    {
+        "head": {"input": "...", "taskid": "...", "request": [...]},
+        "outputs": [{...}, {...}]
+    }
+    
+    也支持旧版格式：
+    [{"name": "...", "code": "..."}, {...}]
+    
+    Returns:
+        如果请求了特定字段(如status, meaning_rank)，则返回映射字典
+        否则返回材质结果列表
+    """
+    max_retries = 5  # 最大重试次数
+    retry_delay = 1  # 重试间隔(秒)
+    
+    try:
+        # 支持新版 dict 格式与旧版 list 格式
+        if isinstance(materials_json, dict):
+            # 对于新格式，保留完整结构
+            data = materials_json.copy()
+            material_list = data.get('outputs', [])
+        else:
+            # 对于旧版，转换为简单材质组
+            material_list = materials_json
+            data = {"outputs": material_list}
+        
+        # 验证材质列表
+        for idx, material in enumerate(material_list):
+            if not isinstance(material, dict) or "name" not in material or "code" not in material:
+                return [{'status': False, 'error_msg': f"材质 #{idx+1} 格式错误：缺少name或code字段"}]
+        
+        retry_count = 0
+        last_result = None
+        
+        # 重试循环
+        while retry_count < max_retries:
+            try:
+                # 连接服务器
+                sender = MaterialSender(server_address=server_address, port=port, reverse_mode=reverse_mode, timeout=timeout)
+                if not sender.connect():
+                    error_msg = f"无法连接到Blender服务器 (尝试 {retry_count+1}/{max_retries})"
+                    print(error_msg)
+                    retry_count += 1
+                    time.sleep(retry_delay)
+                    continue
+                
+                # 发送请求
+                results = sender.send_material_group(data)
+                sender.close()
+                
+                # 检查结果是否有效
+                if results is None or (isinstance(results, list) and len(results) == 0):
+                    print(f"收到空结果 (尝试 {retry_count+1}/{max_retries})，将重试...")
+                    last_result = results  # 保存最后一次结果
+                    retry_count += 1
+                    time.sleep(retry_delay)
+                else:
+                    # 如果结果有效，直接返回
+                    return results
+            
+            except Exception as e:
+                print(f"第 {retry_count+1}/{max_retries} 次尝试时出错: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                retry_count += 1
+                time.sleep(retry_delay)
+        
+        # 所有重试都失败了
+        print(f"经过 {max_retries} 次尝试后仍然失败")
+        if last_result is not None:
+            print("返回最后收到的结果")
+            return last_result
+        else:
+            return [{'status': False, 'error_msg': f"多次尝试后仍无法获取有效响应"}]
+            
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return [{'status': False, 'error_msg': f"发送材质时出错: {str(e)}"}]
+
+class ClientSender:
+    """客户端发送器，提供持久化连接和重试机制
+    
+    该类封装了MaterialSender，同时提供了与send_materials_json_to_blender相同的数据验证和重试功能。
+    主要优势是允许创建一个实例后多次发送材质数据，而不必每次都重新建立连接。
+    """
+    
+    def __init__(self, server_address="localhost", port=5555, reverse_mode=False, timeout=15000, max_retries=5, retry_delay=1):
+        """初始化客户端发送器
+        
+        Args:
+            server_address: 服务器地址，默认localhost
+            port: 服务器端口，默认5555
+            reverse_mode: 是否使用反向连接模式，默认False
+            timeout: 超时时间(毫秒)，默认15000
+            max_retries: 最大重试次数，默认5
+            retry_delay: 重试间隔(秒)，默认1
+        """
+        self.server_address = server_address
+        self.port = port
+        self.reverse_mode = reverse_mode
+        self.timeout = timeout
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
+        
+        # 初始化MaterialSender但不立即连接
+        self.sender = None
+        self.connected = False
+    
+    def connect(self):
+        """连接到服务器，如果已连接则忽略
+        
+        Returns:
+            bool: 连接是否成功
+        """
+        if self.connected and self.sender:
+            print("已经连接到服务器")
+            return True
+            
+        try:
+            # 创建新的MaterialSender实例
+            self.sender = MaterialSender(
+                server_address=self.server_address,
+                port=self.port,
+                reverse_mode=self.reverse_mode,
+                timeout=self.timeout
+            )
+            
+            # 尝试连接
+            if self.sender.connect():
+                self.connected = True
+                print(f"已连接到服务器 {self.server_address}:{self.port}")
+                return True
+            else:
+                self.connected = False
+                print(f"无法连接到服务器 {self.server_address}:{self.port}")
+                return False
+                
+        except Exception as e:
+            self.connected = False
+            print(f"连接服务器时出错: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def close(self):
+        """关闭连接，释放资源"""
+        if self.sender and self.connected:
+            try:
+                self.sender.close()
+                print("连接已关闭")
+            except Exception as e:
+                print(f"关闭连接时出错: {str(e)}")
+            finally:
+                self.connected = False
+                self.sender = None
+    
+    def send_materials(self, materials_json):
+        """发送材质数据到Blender服务器
+        
+        这个方法结合了send_materials_json_to_blender的格式处理和重试机制，
+        同时保持连接状态，避免重复建立连接。
+        
+        Args:
+            materials_json: 包含材质数据的字典或列表
+            
+        Returns:
+            list或dict: 包含处理结果的列表或字典
+        """
+        # 支持新版 dict 格式与旧版 list 格式
+        if isinstance(materials_json, dict):
+            # 对于新格式，保留完整结构
+            data = materials_json.copy()
+            material_list = data.get('outputs', [])
+        else:
+            # 对于旧版，转换为简单材质组
+            material_list = materials_json
+            data = {"outputs": material_list}
+        
+        # 验证材质列表
+        for idx, material in enumerate(material_list):
+            if not isinstance(material, dict) or "name" not in material or "code" not in material:
+                return [{'status': False, 'error_msg': f"材质 #{idx+1} 格式错误：缺少name或code字段"}]
+        
+        # 确保已连接
+        if not self.connected:
+            retry_count = 0
+            while retry_count < self.max_retries:
+                print(f"尝试连接服务器... ({retry_count+1}/{self.max_retries})")
+                if self.connect():
+                    break
+                retry_count += 1
+                if retry_count < self.max_retries:
+                    time.sleep(self.retry_delay)
+            
+            if not self.connected:
+                return [{'status': False, 'error_msg': f"经过 {self.max_retries} 次尝试后仍无法连接到服务器"}]
+        
+        # 发送请求，带重试
+        retry_count = 0
+        last_error = None
+        
+        while retry_count < self.max_retries:
+            try:
+                print(f"发送材质组数据... ({retry_count+1}/{self.max_retries})")
+                results = self.sender.send_material_group(data)
+                
+                # 检查结果有效性
+                if results is None or (isinstance(results, list) and len(results) == 0):
+                    print(f"收到空结果，将重试...")
+                    retry_count += 1
+                    time.sleep(self.retry_delay)
+                    continue
+                
+                # 如果结果有效，直接返回
+                return results
+                
+            except Exception as e:
+                last_error = e
+                print(f"发送材质时出错: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                
+                # 检查是否是连接问题，如果是则尝试重新连接
+                if "ZMQError" in str(e) or "Connection" in str(e):
+                    print("尝试重新建立连接...")
+                    self.close()  # 关闭现有连接
+                    if not self.connect():
+                        print("重新连接失败")
+                    
+                retry_count += 1
+                if retry_count < self.max_retries:
+                    time.sleep(self.retry_delay)
+        
+        # 所有重试都失败了
+        error_msg = f"经过 {self.max_retries} 次尝试后仍然失败: {last_error}"
+        print(error_msg)
+        return [{'status': False, 'error_msg': error_msg}]
+    
+    def __enter__(self):
+        """支持with语句上下文管理"""
+        self.connect()
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """退出上下文时自动关闭"""
+        self.close()
+
 
 def main():
     """命令行入口点"""
