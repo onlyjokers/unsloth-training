@@ -392,18 +392,18 @@ materials2 = {
             "name": "M2",
             "code": blender_code4
         },
-        # {
-        #     "name": "M3",
-        #     "code": blender_code
-        # },
-        # {
-        #     "name": "M4",
-        #     "code": blender_code2
-        # },
-        # {
-        #     "name": "M5",
-        #     "code": blender_code2
-        # }
+        {
+            "name": "M3",
+            "code": blender_code3
+        },
+        {
+            "name": "M4",
+            "code": blender_code3
+        },
+        {
+            "name": "M5",
+            "code": blender_code3
+        }
     ]
 }
 
@@ -423,10 +423,6 @@ print("第二次发送材质...")
 response = client.send_materials(materials2)
 print(response)
 print(response["accuracy_rank"])
-    
-    
-
-
 
 
 # print(response[0]['status'])

@@ -695,11 +695,11 @@ class ClientSender:
                 results = self.sender.send_material_group(data)
                 
                 # 检查结果有效性
-                # if results is None or (isinstance(results, list) and len(results) == 0):
-                #     print(f"收到空结果，将重试...")
-                #     retry_count += 1
-                #     time.sleep(self.retry_delay)
-                #     continue
+                if results is None or (isinstance(results, list) and len(results) == 0):
+                    print(f"收到空结果，将重试...")
+                    retry_count += 1
+                    time.sleep(self.retry_delay)
+                    continue
                 
                 # 如果结果有效，直接返回
                 return results
