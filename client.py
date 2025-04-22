@@ -79,9 +79,20 @@ class MaterialSender:
                     print("警告：尚未有服务器连接，但将继续等待连接...")
                 return True
             else:
-                # 传统模式：主动连接到服务器
-                print(f"连接到服务器 {self.server_address}:{self.port}...")
-                self.socket.connect(f"tcp://{self.server_address}:{self.port}")
+                # 传统模式：使用TCP连接
+                # 处理URL，去除可能存在的http:// 或 https:// 前缀
+                server_addr = self.server_address
+                if server_addr.startswith("http://"):
+                    server_addr = server_addr[7:]
+                elif server_addr.startswith("https://"):
+                    server_addr = server_addr[8:]
+                
+                # 移除URL中可能存在的路径部分
+                if "/" in server_addr:
+                    server_addr = server_addr.split("/")[0]
+                
+                print(f"连接到服务器 {server_addr}:{self.port}...")
+                self.socket.connect(f"tcp://{server_addr}:{self.port}")
                 return True
         except zmq.ZMQError as e:
             print(f"连接服务器失败: {e}")
@@ -349,7 +360,8 @@ class MaterialSender:
                     if isinstance(response, dict):
                         if 'status' in response or 'meaning_rank' in response:
                             # 返回用户请求的字段映射
-                            return {k: response[k] for k in response if k not in ('session_id','taskid','material_results','timestamp')}
+                            # 保留所有字段（不排除任何字段）
+                            return response
                         # 否则按旧版处理
                         return response.get('material_results', [])
                     return response

@@ -345,6 +345,7 @@ blender_code4 = """
     
 # 在 materials 定义前生成唯一 taskid
 taskid = uuid.uuid4().hex
+taskid2 = uuid.uuid4().hex
 
 print(taskid + "\n")
 
@@ -354,7 +355,7 @@ materials1 = {
         "input": "创建一个红色的楼房的材质",
         "taskid": taskid, #"1c6cafdb570d4428a30e59da3a783b79", #taskid, # 得注意重定义问题。得在数据集环节就植入 taskid
         # "request": ["accuracy_rank", "meaning_rank", "error_msg"]
-        "request": []
+        "request": ["all"]
     },
     "outputs": [
         {
@@ -380,7 +381,7 @@ materials1 = {
 materials2 = {
     "head": {
         "input": "创建一个红色的楼房的材质",
-        "taskid": taskid, #"1c6cafdb570d4428a30e59da3a783b79", #taskid, # 得注意重定义问题。得在数据集环节就植入 taskid
+        "taskid": taskid2, #"1c6cafdb570d4428a30e59da3a783b79", #taskid, # 得注意重定义问题。得在数据集环节就植入 taskid
         "request": []
     },
     "outputs": [
@@ -408,13 +409,15 @@ materials2 = {
 }
 
 # 使用ClientSender类进行持久化连接
-client = ClientSender(server_address="10.30.244.17", port=5555)
+client = ClientSender(server_address="121.196.205.73", port=5678)
+# client = ClientSender(server_address="10.30.244.17", port=5555)
+# client = ClientSender(server_address="127.0.0.1", port=5555)
 
 # 第一次发送材质
-# print("第一次发送材质...")
-# response1 = client.send_materials(materials1)
+print("第一次发送材质...")
+response1 = client.send_materials(materials1)
 
-# print(response1)
+print(response1)
 
 # time.sleep(10)
 
@@ -425,4 +428,4 @@ print(response)
 print(response["accuracy_rank"])
 
 
-# print(response[0]['status'])
+print(response[0]['status'])
